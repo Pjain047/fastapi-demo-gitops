@@ -18,6 +18,15 @@ spec:
     server: https://kubernetes.default.svc
     namespace: fastapi-demo
 
+  # The HPA owns spec.replicas at runtime, so don't flag the Deployment
+  # as OutOfSync (or try to reset it) when the autoscaler changes the count.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: fastapi-demo
+      jsonPointers:
+        - /spec/replicas
+
   syncPolicy:
     automated:
       prune: true
