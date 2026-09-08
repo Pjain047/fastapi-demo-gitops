@@ -1,0 +1,46 @@
+replicaCount: 2
+
+nameOverride: ""
+fullnameOverride: ""
+
+namespace:
+  create: false
+  name: ""
+
+image:
+  repository: prashantjain047/fastapi-demo
+  pullPolicy: Always
+  tag: latest
+
+service:
+  type: NodePort
+  port: 80
+  targetPort: 8000
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+config:
+  ENVIRONMENT: "minikube"
+  APP_VERSION: "1.1.0"
+  APP_NAME: "FastAPI Demo With Task Management API"
+  LOG_LEVEL: "DEBUG"
+
+secret:
+  create: true
+  data:
+    DEMO_USERNAME: cGphbmFsaW4=
+    DEMO_API_KEY: cGFzc3dvcmQxMjM=
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 50
+  targetMemoryUtilizationPercentage: 50
+  
