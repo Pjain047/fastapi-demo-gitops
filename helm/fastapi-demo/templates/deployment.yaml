@@ -14,6 +14,9 @@ spec:
     metadata:
       labels:
         {{- include "fastapi-demo.selectorLabels" . | nindent 8 }}
+        # Used by the Istio DestinationRule 'stable' subset (and by Flagger,
+        # which runs a separate canary Deployment labeled version: canary).
+        version: stable
     spec:
       containers:
         - name: {{ include "fastapi-demo.name" . }}

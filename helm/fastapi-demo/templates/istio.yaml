@@ -1,0 +1,48 @@
+{{- if .Values.istio.enabled }}
+# DestinationRule: defines load-balancing policy and subsets for the app.
+# Subsets (stable/canary) are selected by pod version label and are used by
+# Flagger for canary deployments.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: {{ include "fastapi-demo.fullname" . }}
+  namespace: {{ include "fastapi-demo.namespace" . }}
+  labels:
+    {{- include "fastapi-demo.labels" . | nindent 4 }}
+spec:
+  host: {{ include "fastapi-demo.fullname" . }}
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_REQUEST
+  subsets:
+    - name: stable
+      labels:
+        version: stable
+    - name: canary
+      labels:
+        version: canary
+---
+# VirtualService: routes the public hostname to the app through the Istio
+# ingress gateway. The route targets the 'stable' subset by default; Flagger
+# later shifts weight between stable and canary during a canary release.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: {{ include "fastapi-demo.fullname" . }}
+  namespace: {{ include "fastapi-demo.namespace" . }}
+  labels:
+    {{- include "fastapi-demo.labels" . | nindent 4 }}
+spec:
+  hosts:
+    - {{ .Values.istio.host }}
+  gateways:
+    - {{ .Values.istio.gateway }}
+  http:
+    - route:
+        - destination:
+            host: {{ include "fastapi-demo.fullname" . }}
+            subset: stable
+            port:
+              number: {{ .Values.service.port }}
+          weight: 100
+{{- end }}
