@@ -10,7 +10,7 @@ spec:
 
   source:
     repoURL: https://github.com/Pjain047/fastapi-demo-gitops
-    tragetRevision: main
+    targetRevision: main
 
     path: helm/fastapi-demo
 
