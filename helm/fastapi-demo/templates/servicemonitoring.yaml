@@ -14,7 +14,7 @@ spec:
 
   selector:
     matchLabels:
-      app: {{ include "fastapi-demo.name" . }}
+      app.kubernetes.io/name: {{ include "fastapi-demo.name" . }}
 
   endpoints:
     - port: http

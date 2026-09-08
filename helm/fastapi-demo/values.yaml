@@ -51,5 +51,5 @@ serviceMonitor:
   interval: 30s
   scrapeTimeout: 10s
   serviceMonitorSelectorNilUsesHelmValues: false
-  serviceMonitoringNamspaceSeletor: {}
-  serviceMonitoringSelector: {}
+  serviceMonitorNamespaceSelector: {}
+  serviceMonitorSelector: {}

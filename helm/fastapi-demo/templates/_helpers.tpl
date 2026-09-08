@@ -22,6 +22,7 @@
 {{/* Common labels. */}}
 {{- define "fastapi-demo.labels" -}}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+app: {{ include "fastapi-demo.name" . }}
 app.kubernetes.io/name: {{ include "fastapi-demo.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
@@ -30,6 +31,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{/* Selector labels. */}}
 {{- define "fastapi-demo.selectorLabels" -}}
+app: {{ include "fastapi-demo.name" . }}
 app.kubernetes.io/name: {{ include "fastapi-demo.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
