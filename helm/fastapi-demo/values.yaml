@@ -50,3 +50,13 @@ serviceMonitor:
   enabled: true
   interval: 30s
   scrapeTimeout: 10s
+
+ingress:
+  enabled: false
+  className: nginx
+  host: fastapi-demo.127.0.0.1.nip.io
+
+gateway:
+  enabled: true
+  gatewayClassName: nginx
+  host: fastapi-demo.127.0.0.1.nip.io

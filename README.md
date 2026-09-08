@@ -1,220 +1,231 @@
-# FastAPI Demo GitOps with ArgoCD
+# FastAPI Demo — GitOps Repository
 
-This repository contains the GitOps configuration for deploying FastAPI application using **ArgoCD** and **Helm**. The application is automatically synced from this repository to the Kubernetes cluster.
+This repository is the **GitOps source of truth** for deploying the FastAPI Demo application onto Kubernetes using **Argo CD** and **Helm**. Every change pushed to this repo is automatically reconciled into the cluster.
 
-Source Application Repository: https://github.com/Pjain047/fastapi-demo
+> **Application source code** (the FastAPI app itself) lives in a separate repo:
+> https://github.com/Pjain047/fastapi-demo
 
 ---
 
-## 🚀 Quick Start Commands
+## 🎯 Why this project exists
 
-### 1. Create/Deploy the Application
+This repo demonstrates a **production-style GitOps workflow** on a local Minikube cluster:
+
+- **Declarative deployments** — the entire app state is described as code (Helm chart) and stored in Git.
+- **Automated reconciliation** — Argo CD continuously watches this repo and applies changes; manual `kubectl` edits are auto-corrected (`selfHeal`).
+- **Modern traffic management** — uses the Kubernetes **Gateway API** (`Gateway` + `HTTPRoute`) instead of the legacy Ingress resource.
+- **Observability built-in** — a `ServiceMonitor` wires the app's `/metrics` endpoint into Prometheus for scraping and Grafana dashboards.
+
+The goal: a realistic, end-to-end example of how a service goes from Git → cluster → monitored traffic.
+
+---
+
+## 🏗️ What it does (architecture)
+
+```
+                ┌─────────────────────────────────────────────┐
+                │                 Git (this repo)              │
+                │        helm/fastapi-demo (Helm chart)        │
+                └───────────────────┬─────────────────────────┘
+                                    │  Argo CD polls & syncs
+                                    ▼
+┌──────────┐   HTTP    ┌────────────────────────────────────────────┐
+│  Client  │ ────────► │  Gateway (NGINX Gateway Fabric)            │
+└──────────┘           │   └── HTTPRoute ──► Service ──► Pods (xN)  │
+                       │        fastapi-demo namespace               │
+                       └───────────────────┬────────────────────────┘
+                                           │  /metrics scraped
+                                           ▼
+                                  ┌─────────────────┐
+                                  │  Prometheus +    │  (kube-prometheus-stack,
+                                  │  Grafana         │   monitoring namespace)
+                                  └─────────────────┘
+```
+
+1. **Argo CD** applies the Helm chart from `helm/fastapi-demo`.
+2. The app runs as a **Deployment** (auto-scaled by an **HPA**).
+3. A **Gateway** + **HTTPRoute** (Gateway API) expose the app on `http://fastapi-demo.127.0.0.1.nip.io` via the **NGINX Gateway Fabric** controller.
+4. A **ServiceMonitor** tells Prometheus to scrape `/metrics`; Grafana visualizes request rates, latency, and errors.
+
+---
+
+## 📁 Repository layout & file details
+
+```
+fastapi-demo-gitops/
+├── README.md                        ← you are here
+├── argocd/
+│   └── application.yaml             ← Argo CD Application: tells Argo CD what to
+│                                      sync (repo, path, branch) and where
+│                                      (cluster, namespace), with automated
+│                                      prune + selfHeal policy.
+└── helm/
+    └── fastapi-demo/                ← the Helm chart for the app
+        ├── Chart.yaml               ← chart metadata (name, version, appVersion)
+        ├── values.yaml              ← all tunable config (replicas, image, resources,
+        │                              HPA, serviceMonitor, ingress, gateway)
+        └── templates/
+            ├── _helpers.tpl         ← shared template helpers: name/fullname,
+            │                              common labels, selector labels, namespace
+            ├── namespace.yaml       ← the fastapi-demo Namespace
+            ├── deployment.yaml      ← app Pods: image, env from configmap/secret,
+            │                              resources, liveness/readiness probes
+            ├── service.yaml         ← Cluster-internal Service (port 80 → 8000),
+            │                              labeled so the ServiceMonitor can find it
+            ├── hpa.yaml             ← HorizontalPodAutoscaler: CPU/memory based
+            │                              scaling (min 2, max 5)
+            ├── configmap.yaml       ← non-sensitive env config (APP_NAME, LOG_LEVEL,
+            │                              METRICS_ENABLED, ...)
+            ├── secret.yaml          ← sensitive config (base64 credentials/keys)
+            ├── servicemonitoring.yaml ← Prometheus ServiceMonitor: selects the
+            │                              Service by label, scrapes /metrics
+            ├── ingress.yaml         ← legacy Ingress (DISABLED — kept for reference;
+            │                              ingress.enabled: false)
+            ├── gateway.yaml         ← Gateway API: the Gateway (listener on the host,
+            │                              gatewayClassName nginx)
+            └── httproute.yaml       ← Gateway API: the HTTPRoute that binds the
+                                           hostname to the Service backend (ACTIVE path)
+```
+
+### File-by-file purpose
+
+| File | Kind(s) it creates | What it does |
+|------|--------------------|--------------|
+| [argocd/application.yaml](argocd/application.yaml) | Argo CD `Application` | Registers this repo with Argo CD; enables automated sync, `prune`, `selfHeal`, and `CreateNamespace`. |
+| [helm/fastapi-demo/Chart.yaml](helm/fastapi-demo/Chart.yaml) | Helm chart metadata | Chart name/version and the application version. |
+| [helm/fastapi-demo/values.yaml](helm/fastapi-demo/values.yaml) | — (config) | Single place to tune replicas, image, resources, HPA, ServiceMonitor, and the Gateway/Ingress host. |
+| [templates/_helpers.tpl](helm/fastapi-demo/templates/_helpers.tpl) | — (helpers) | Reusable template functions for consistent naming, labeling, and namespace selection. |
+| [templates/namespace.yaml](helm/fastapi-demo/templates/namespace.yaml) | `Namespace` | Creates the `fastapi-demo` namespace. |
+| [templates/deployment.yaml](helm/fastapi-demo/templates/deployment.yaml) | `Deployment` | Runs the app containers with probes and resource limits. |
+| [templates/service.yaml](helm/fastapi-demo/templates/service.yaml) | `Service` | Stable internal endpoint for the pods; the routing + metrics target. |
+| [templates/hpa.yaml](helm/fastapi-demo/templates/hpa.yaml) | `HorizontalPodAutoscaler` | Scales pods on CPU/memory. |
+| [templates/configmap.yaml](helm/fastapi-demo/templates/configmap.yaml) | `ConfigMap` | Non-sensitive environment variables. |
+| [templates/secret.yaml](helm/fastapi-demo/templates/secret.yaml) | `Secret` | Sensitive environment variables (base64). |
+| [templates/servicemonitoring.yaml](helm/fastapi-demo/templates/servicemonitoring.yaml) | `ServiceMonitor` | Prometheus scrape config for `/metrics`. |
+| [templates/ingress.yaml](helm/fastapi-demo/templates/ingress.yaml) | `Ingress` | **Disabled** legacy path (`ingress.enabled: false`). |
+| [templates/gateway.yaml](helm/fastapi-demo/templates/gateway.yaml) | `Gateway` | **Active** Gateway API listener: opens port 80 for the host via the `nginx` GatewayClass. |
+| [templates/httproute.yaml](helm/fastapi-demo/templates/httproute.yaml) | `HTTPRoute` | **Active** route: binds the hostname to the Service backend (this is what actually forwards traffic). |
+
+---
+
+## 🔀 Ingress vs Gateway API
+
+This project uses the **Gateway API** (the successor to Ingress):
+
+- `gateway.enabled: true`, `ingress.enabled: false` in [values.yaml](helm/fastapi-demo/values.yaml).
+- `GatewayClass: nginx` is provided by **NGINX Gateway Fabric** (installed separately, not by this chart).
+- The app is reachable at **`http://fastapi-demo.127.0.0.1.nip.io`** — a [nip.io](https://nip.io) hostname that resolves to `127.0.0.1`, so **no local hosts-file edits are needed**.
+
+The legacy `ingress.yaml` template is kept in the chart but disabled, so you can flip back if ever needed.
+
+---
+
+## ⚙️ Key configuration (values.yaml)
+
+| Parameter | Value | Explanation |
+|-----------|-------|-------------|
+| `replicaCount` | 3 | Baseline pod replicas |
+| `image.repository` | prashantjain047/fastapi-demo | Container image |
+| `image.tag` | latest | Image tag |
+| `service.type` | NodePort | Service exposure type |
+| `service.port` / `targetPort` | 80 / 8000 | Service port → container port |
+| `hpa.enabled` | true | Enable autoscaling |
+| `hpa.minReplicas` / `maxReplicas` | 2 / 5 | Scaling bounds |
+| `hpa.targetCPU/MemoryUtilizationPercentage` | 50 | Scale-up thresholds |
+| `serviceMonitor.enabled` | true | Create the Prometheus ServiceMonitor |
+| `gateway.enabled` | true | **Active** — create Gateway + HTTPRoute |
+| `gateway.gatewayClassName` | nginx | Matches the NGINX Gateway Fabric GatewayClass |
+| `gateway.host` | fastapi-demo.127.0.0.1.nip.io | Public hostname (resolves to 127.0.0.1) |
+| `ingress.enabled` | false | Legacy Ingress disabled |
+
+---
+
+## 🚀 Quick start
+
+### Deploy / register the app with Argo CD
 ```bash
 kubectl apply -f argocd/application.yaml
 ```
-**What it does:** Creates an ArgoCD Application resource that tells ArgoCD to sync the Helm chart from this repository to your cluster.
 
-### 2. View Application in ArgoCD
+### Check sync status
 ```bash
 kubectl get application -n argocd
 kubectl describe application fastapi-demo -n argocd
 ```
-**What it does:** Lists all ArgoCD applications and shows detailed information about the fastapi-demo application deployment status.
 
-### 3. Delete Application
+### Force a sync (if you don't want to wait for auto-sync)
+```bash
+argocd app sync fastapi-demo
+```
+
+### Access the app
+```bash
+# Requires the Gateway data-plane to be reachable (see "Accessing the Gateway" below)
+curl http://fastapi-demo.127.0.0.1.nip.io/health
+```
+
+### Delete the app
 ```bash
 kubectl delete application fastapi-demo -n argocd
 ```
-**What it does:** Deletes the ArgoCD Application resource. Note: With `selfHeal: true`, if you delete the deployment, ArgoCD will recreate it automatically from the Helm chart.
 
-### 4. Sync Application Manually (if needed)
+---
+
+## 🌐 Accessing the Gateway on Minikube
+
+The NGINX Gateway Fabric exposes a `LoadBalancer` service. On Minikube, an external IP is only assigned while a tunnel is running:
+
 ```bash
-argocd app sync fastapi-demo
-```
-**What it does:** Forces ArgoCD to pull the latest changes from GitHub and apply them to the cluster immediately.
-
----
-
-## 📋 ArgoCD Application.yaml Explained
-
-The `argocd/application.yaml` file defines how ArgoCD manages your deployment:
-
-```yaml
-apiVersion: argoproj.io/v1alpha1          # ArgoCD API version
-kind: Application                          # Kubernetes resource type
-
-metadata:
-  name: fastapi-demo                       # Name of the application in ArgoCD
-  namespace: argocd                        # ArgoCD runs in the argocd namespace
-
-spec:
-  project: default                         # ArgoCD project (default is permissive)
-
-  source:
-    repoURL: https://github.com/Pjain047/fastapi-demo-gitops  # Git repository URL
-    targetRevision: main                   # Git branch/tag to track for changes
-    path: helm/fastapi-demo                # Path to Helm chart in the repo
-
-  destination:
-    server: https://kubernetes.default.svc # Target Kubernetes cluster (this cluster)
-    namespace: fastapi-demo                # Namespace where app will be deployed
-
-  syncPolicy:
-    automated:
-      prune: true                          # Delete resources if removed from Git (cleanup)
-      selfHeal: true                       # Automatically sync if manual changes detected
-    syncOptions:
-      - CreateNamespace=true               # Auto-create the namespace if it doesn't exist
+minikube tunnel        # keep this running in a separate terminal (may need admin)
 ```
 
----
+Then browse to `http://fastapi-demo.127.0.0.1.nip.io`.
 
-## ⚙️ Helm Chart Configuration
+**Without a tunnel**, the gateway's data-plane is still reachable from inside the cluster:
 
-### Key Values (values.yaml)
-
-| Parameter | Value | Explanation |
-|-----------|-------|-------------|
-| `replicaCount` | 3 | Number of pod replicas running simultaneously |
-| `image.repository` | prashantjain047/fastapi-demo | Docker image to deploy |
-| `image.tag` | latest | Docker image version |
-| `service.type` | NodePort | Service type (NodePort = accessible via Node IP) |
-| `service.port` | 80 | External port |
-| `service.targetPort` | 8000 | Container port (FastAPI app runs on 8000) |
-| `resources.requests.cpu` | 100m | Minimum CPU allocated to each pod |
-| `resources.requests.memory` | 128Mi | Minimum memory allocated to each pod |
-| `resources.limits.cpu` | 500m | Maximum CPU each pod can use |
-| `resources.limits.memory` | 512Mi | Maximum memory each pod can use |
-| `hpa.enabled` | true | Enable Horizontal Pod Autoscaler (auto-scale based on metrics) |
-| `hpa.minReplicas` | 2 | Minimum pods during low load |
-| `hpa.maxReplicas` | 5 | Maximum pods during high load |
-| `hpa.targetCPUUtilizationPercentage` | 50% | Scale up when CPU usage > 50% |
-| `hpa.targetMemoryUtilizationPercentage` | 50% | Scale up when memory usage > 50% |
-
-### Environment Configuration
-- **ENVIRONMENT**: minikube
-- **APP_VERSION**: 1.1.0
-- **APP_NAME**: FastAPI Demo With Task Management API
-- **LOG_LEVEL**: DEBUG
-
----
-
-## 🔧 Kubernetes Templates Explanation
-
-### 1. **deployment.yaml**
-- Defines how many pod replicas to run
-- Configures container image, ports, and environment variables
-- Sets resource requests/limits for CPU and memory
-- Includes health checks (liveness & readiness probes on `/health` endpoint)
-
-### 2. **hpa.yaml** (Horizontal Pod Autoscaler)
-- Automatically scales pods based on CPU and memory metrics
-- Requires `metrics-server` to be installed in the cluster
-- Scales between min (2) and max (5) replicas
-
-### 3. **service.yaml**
-- Exposes the application to the network
-- Type: NodePort (accessible via `<NodeIP>:NodePort`)
-
-### 4. **configmap.yaml**
-- Stores non-sensitive configuration (environment variables)
-- Mounted as environment variables in containers
-
-### 5. **secret.yaml**
-- Stores sensitive data (credentials, API keys)
-- Base64 encoded for basic security
-
-### 6. **namespace.yaml**
-- Creates the `fastapi-demo` namespace for the application
-
----
-
-## ⚠️ Current Issues & Fixes
-
-### Issue: HPA Metrics Errors
-**Error shown in ArgoCD:**
-```
-FailedGetResourceMetric: failed to get cpu utilization: unable to get metrics for resource cpu
-FailedComputeMetricsRe: invalid metrics (2 invalid out of 2)
-```
-
-**Root Cause:** The Kubernetes cluster doesn't have `metrics-server` installed. HPA needs metrics-server to collect CPU/memory data.
-
-**Fix Option 1: Install Metrics Server** (Recommended)
 ```bash
-# Install metrics-server for Minikube
-minikube addons enable metrics-server
-
-# Verify it's running
-kubectl get deployment metrics-server -n kube-system
-kubectl get pods -n kube-system | grep metrics-server
-```
-
-**Fix Option 2: Disable HPA Temporarily**
-Edit `helm/fastapi-demo/values.yaml`:
-```yaml
-hpa:
-  enabled: false  # Change from true to false
-```
-Then re-sync:
-```bash
-argocd app sync fastapi-demo
+kubectl run tmp --rm -i --restart=Never --image=curlimages/curl -n fastapi-demo -- \
+  sh -c "curl -s -H 'Host: fastapi-demo.127.0.0.1.nip.io' http://fastapi-demo-nginx.fastapi-demo.svc.cluster.local/health"
 ```
 
 ---
 
-## 🔄 How GitOps Works
+## 📊 Monitoring
 
-1. **You make changes** to `helm/fastapi-demo/values.yaml` in this Git repo
-2. **ArgoCD watches** the GitHub repository every 3 minutes (default)
-3. **ArgoCD detects changes** and automatically applies them to the cluster
-4. **With `selfHeal: true`**, any manual kubectl changes are overridden to match Git
+The chart creates a `ServiceMonitor`, so once Prometheus (kube-prometheus-stack) is configured to watch all namespaces, the app's `/metrics` is scraped automatically. Useful queries:
 
-To test: Edit `values.yaml` → Push to main → Watch ArgoCD sync automatically
+```promql
+# Request rate by handler
+sum by (handler) (rate(http_requests_total{namespace="fastapi-demo"}[2m]))
 
----
+# p95 latency
+histogram_quantile(0.95, sum by (le, handler) (rate(http_request_duration_seconds_bucket{namespace="fastapi-demo"}[2m])))
 
-## 📊 Monitoring & Debugging
-
-### Check ArgoCD Application Status
-```bash
-kubectl get application fastapi-demo -n argocd
-kubectl describe application fastapi-demo -n argocd
-```
-
-### View Pod Status
-```bash
-kubectl get pods -n fastapi-demo
-kubectl logs -f deployment/fastapi-demo -n fastapi-demo
-```
-
-### Access the Application
-```bash
-# Get NodePort
-kubectl get svc -n fastapi-demo
-
-# Access via: http://<NodeIP>:<NodePort>
+# Error ratio (%)
+100 * sum(rate(http_requests_total{namespace="fastapi-demo",status=~"[45]xx"}[2m]))
+    / sum(rate(http_requests_total{namespace="fastapi-demo"}[2m]))
 ```
 
 ---
 
-## 🛠️ Useful Commands Reference
+## 🔄 How GitOps works here
 
-| Command | Purpose |
-|---------|---------|
-| `kubectl apply -f argocd/application.yaml` | Create ArgoCD application |
-| `argocd app list` | List all ArgoCD applications |
-| `argocd app sync fastapi-demo` | Manually sync application |
-| `argocd app wait fastapi-demo` | Wait for app to sync |
-| `kubectl get hpa -n fastapi-demo` | Check HPA status |
-| `kubectl top nodes` | View node resource usage |
-| `kubectl top pods -n fastapi-demo` | View pod resource usage |
+1. Edit `helm/fastapi-demo/values.yaml` (or any template) and **push to `main`**.
+2. Argo CD detects the change (poll ~3 min, or trigger a manual sync).
+3. Argo CD applies the rendered manifests to the `fastapi-demo` namespace.
+4. With `selfHeal: true`, any out-of-band `kubectl` edits are reverted to match Git.
+5. With `prune: true`, resources removed from Git are deleted from the cluster.
+
+**Try it:** bump `replicaCount`, push, and watch the pods scale in Argo CD.
 
 ---
 
-## 📝 Notes
+## ⚠️ Prerequisites
 
-- ArgoCD stores its configuration in the `argocd` namespace
-- Application is deployed to the `fastapi-demo` namespace (created automatically)
-- All configuration is version-controlled in Git (infrastructure as code)
-- Changes via `kubectl edit` will be overridden by ArgoCD's selfHeal feature
+- A running Kubernetes cluster (this project targets **Minikube**).
+- **Argo CD** installed in the `argocd` namespace.
+- **Gateway API CRDs** installed (`gatewayclasses`, `gateways`, `httproutes`, ...).
+- **NGINX Gateway Fabric** installed (provides the `nginx` GatewayClass).
+- **kube-prometheus-stack** (Prometheus + Grafana) for the ServiceMonitor to take effect.
+
+These cluster-level components are installed by the companion setup script in the app repo (`fastapi-demo/scripts/setup-devops-lab.ps1`).
