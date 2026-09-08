@@ -62,9 +62,8 @@ gateway:
   gatewayClassName: nginx
   host: fastapi-demo.127.0.0.1.nip.io
 
-# Istio service mesh: VirtualService + DestinationRoute via the Istio
+# Istio service mesh: Gateway + VirtualService + DestinationRule via the Istio
 # ingress gateway. Subsets (stable/canary) enable Flagger canary releases.
 istio:
   enabled: true
   host: fastapi-demo.127.0.0.1.nip.io
-  gateway: istio-system/istio-ingressgateway

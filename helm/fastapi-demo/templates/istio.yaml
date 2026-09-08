@@ -1,4 +1,26 @@
 {{- if .Values.istio.enabled }}
+# Gateway: binds the public hostname to port 80 on the Istio ingress gateway.
+# Without this, the ingress gateway has no HTTP listener and the VirtualService
+# has nothing to attach to (result: no route / 503 / connection failure).
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "fastapi-demo.fullname" . }}
+  namespace: {{ include "fastapi-demo.namespace" . }}
+  labels:
+    {{- include "fastapi-demo.labels" . | nindent 4 }}
+spec:
+  selector:
+    # Must match the pod labels of the istio-ingressgateway deployment.
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - {{ .Values.istio.host }}
+---
 # DestinationRule: defines load-balancing policy and subsets for the app.
 # Subsets (stable/canary) are selected by pod version label and are used by
 # Flagger for canary deployments.
@@ -36,7 +58,9 @@ spec:
   hosts:
     - {{ .Values.istio.host }}
   gateways:
-    - {{ .Values.istio.gateway }}
+    # Fully-qualified reference to the Gateway (namespace/name), so the route is
+    # attached even though the ingress gateway workload runs in istio-system.
+    - {{ include "fastapi-demo.namespace" . }}/{{ include "fastapi-demo.fullname" . }}
   http:
     - route:
         - destination:
